@@ -1,0 +1,1678 @@
+--[[
+╔══════════════════════════════════════════════════════════════╗
+║           VXZ Chat By natavxz  ·  V.1                       ║
+║           Optimizado para móvil · Infinix HOT 60 Pro        ║
+║           DPI 396 · Delta Executor                          ║
+╚══════════════════════════════════════════════════════════════╝
+
+  ESTRUCTURA:
+  [1] Servicios & Variables globales
+  [2] Sistema de guardado (DataSave)
+  [3] Función SendChat
+  [4] Utilidades UI (Tween, Sombra, Stroke)
+  [5] Botón flotante principal
+  [6] GUI Principal
+  [7] 16 GUIs de chat (cuadrícula 4×4)
+  [8] Panel de Ajustes
+      [8A] Modificar Símbolos I/F
+      [8B] Editar Títulos
+      [8C] Botón Extra
+  [9] Sistema de Carpetas / Módulos
+      [9A] Config del botón flotante
+      [9B] Create TextBox dinámico (máx 5)
+      [9C] Guardado automático
+  [10] Carga inicial de datos guardados
+
+  VERSIONES FUTURAS:  V.2, V.3, V.4 ...
+--]]
+
+-- ═══════════════════════════════════════════════
+-- [1] SERVICIOS & VARIABLES GLOBALES
+-- ═══════════════════════════════════════════════
+
+local Players            = game:GetService("Players")
+local TweenService       = game:GetService("TweenService")
+local UserInputService   = game:GetService("UserInputService")
+local TextChatService    = game:GetService("TextChatService")
+local RunService         = game:GetService("RunService")
+
+local Player             = Players.LocalPlayer
+local PlayerGui          = Player:WaitForChild("PlayerGui")
+
+-- Versión del script
+local VERSION = "V.1"
+local SCRIPT_NAME = "VXZ Chat By natavxz"
+
+-- Paleta táctica
+local C = {
+    BG_DARK      = Color3.fromRGB(10,  12,  18),
+    BG_MID       = Color3.fromRGB(16,  20,  30),
+    BG_PANEL     = Color3.fromRGB(20,  26,  40),
+    BG_CARD      = Color3.fromRGB(24,  30,  46),
+    ACCENT       = Color3.fromRGB(0,   180, 255),
+    ACCENT2      = Color3.fromRGB(0,   255, 180),
+    ACCENT_DIM   = Color3.fromRGB(0,   100, 160),
+    TEXT_MAIN    = Color3.fromRGB(220, 235, 255),
+    TEXT_DIM     = Color3.fromRGB(120, 145, 180),
+    TEXT_ACCENT  = Color3.fromRGB(0,   200, 255),
+    BTN_SEND     = Color3.fromRGB(0,   160, 220),
+    BTN_CLOSE    = Color3.fromRGB(200,  50,  60),
+    BTN_SETTINGS = Color3.fromRGB(50,   80, 130),
+    BORDER       = Color3.fromRGB(0,   120, 180),
+    BORDER_DIM   = Color3.fromRGB(30,   45,  70),
+    TRANSPARENT  = Color3.fromRGB(0,    0,   0),
+    WHITE        = Color3.fromRGB(255, 255, 255),
+    GREEN        = Color3.fromRGB(0,   200, 100),
+    ORANGE       = Color3.fromRGB(255, 160,  30),
+}
+
+-- Símbolos disponibles
+local SYMBOLS = {"*", "-", '"', "()", "¿?", "!¡", "[]", "ninguno"}
+
+-- Estado global
+local State = {
+    floatLocked   = false,
+    mainOpen      = false,
+    settingsOpen  = false,
+    folderOpen    = false,
+    chatWindows   = {},   -- [1..16] = { open, title, symStart, symEnd, extraBtn, extraAuto }
+    textboxes     = {},   -- carpeta dinámica, máx 5
+    floatConfig   = {
+        size  = 54,
+        color = C.ACCENT,
+        emoji = "💬",
+        alpha = 0,
+        posX  = 20,
+        posY  = 300,
+        text  = "",
+        anim  = true,
+    },
+    version = VERSION,
+}
+
+-- ═══════════════════════════════════════════════
+-- [2] SISTEMA DE GUARDADO
+-- ═══════════════════════════════════════════════
+
+local SAVE_KEY = "VXZChat_natavxz_V1"
+
+local function SaveData()
+    -- En executor, usamos setclipboard o writefile si disponible
+    -- Fallback seguro con pcall
+    pcall(function()
+        if writefile then
+            local data = {
+                chatWindows = {},
+                floatConfig = State.floatConfig,
+                textboxes   = {},
+                floatLocked = State.floatLocked,
+            }
+            for i, cw in ipairs(State.chatWindows) do
+                data.chatWindows[i] = {
+                    title    = cw.title,
+                    symStart = cw.symStart,
+                    symEnd   = cw.symEnd,
+                    extraBtn = cw.extraBtn,
+                    extraAuto= cw.extraAuto,
+                }
+            end
+            for i, tb in ipairs(State.textboxes) do
+                data.textboxes[i] = {
+                    title    = tb.title,
+                    symStart = tb.symStart,
+                    symEnd   = tb.symEnd,
+                    color    = {tb.color.R, tb.color.G, tb.color.B},
+                    btnColor = {tb.btnColor.R, tb.btnColor.G, tb.btnColor.B},
+                    size     = tb.size,
+                    clearOnSend = tb.clearOnSend,
+                }
+            end
+            writefile(SAVE_KEY..".json", game:GetService("HttpService"):JSONEncode(data))
+        end
+    end)
+end
+
+local function LoadData()
+    local ok, result = pcall(function()
+        if readfile and isfile and isfile(SAVE_KEY..".json") then
+            local raw  = readfile(SAVE_KEY..".json")
+            return game:GetService("HttpService"):JSONDecode(raw)
+        end
+    end)
+    if ok and result then
+        return result
+    end
+    return nil
+end
+
+-- ═══════════════════════════════════════════════
+-- [3] FUNCIÓN SEND CHAT (LEGÍTIMA)
+-- ═══════════════════════════════════════════════
+
+local function SendChat(message)
+    pcall(function()
+        if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+            TextChatService.TextChannels.RBXGeneral:SendAsync(message)
+        else
+            game:GetService("ReplicatedStorage")
+                .DefaultChatSystemChatEvents
+                .SayMessageRequest
+                :FireServer(message, "All")
+        end
+    end)
+end
+
+-- ═══════════════════════════════════════════════
+-- [4] UTILIDADES UI
+-- ═══════════════════════════════════════════════
+
+local function Tween(obj, props, t, style, dir)
+    local ti = TweenInfo.new(
+        t or 0.25,
+        style or Enum.EasingStyle.Quart,
+        dir   or Enum.EasingDirection.Out
+    )
+    TweenService:Create(obj, ti, props):Play()
+end
+
+local function AddStroke(obj, color, thickness, trans)
+    local s = Instance.new("UIStroke")
+    s.Color        = color or C.BORDER
+    s.Thickness    = thickness or 1.2
+    s.Transparency = trans or 0.4
+    s.Parent       = obj
+    return s
+end
+
+local function AddCorner(obj, radius)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, radius or 8)
+    c.Parent       = obj
+    return c
+end
+
+local function AddPadding(obj, px, py)
+    local p = Instance.new("UIPadding")
+    p.PaddingLeft   = UDim.new(0, px or 8)
+    p.PaddingRight  = UDim.new(0, px or 8)
+    p.PaddingTop    = UDim.new(0, py or 6)
+    p.PaddingBottom = UDim.new(0, py or 6)
+    p.Parent        = obj
+    return p
+end
+
+-- Crear Frame base con estilo táctico
+local function MakeFrame(parent, size, pos, color, alpha)
+    local f = Instance.new("Frame")
+    f.Size              = size
+    f.Position          = pos
+    f.BackgroundColor3  = color or C.BG_PANEL
+    f.BackgroundTransparency = alpha or 0.08
+    f.BorderSizePixel   = 0
+    f.Parent            = parent
+    return f
+end
+
+-- Crear Label táctica
+local function MakeLabel(parent, text, size, pos, textColor, textSize, font)
+    local l = Instance.new("TextLabel")
+    l.Size              = size
+    l.Position          = pos
+    l.Text              = text
+    l.TextColor3        = textColor or C.TEXT_MAIN
+    l.TextSize          = textSize or 14
+    l.Font              = font or Enum.Font.GothamBold
+    l.BackgroundTransparency = 1
+    l.TextXAlignment    = Enum.TextXAlignment.Left
+    l.Parent            = parent
+    return l
+end
+
+-- Crear TextButton táctico
+local function MakeButton(parent, text, size, pos, bgColor, textColor, textSize)
+    local b = Instance.new("TextButton")
+    b.Size              = size
+    b.Position          = pos
+    b.Text              = text
+    b.TextColor3        = textColor or C.WHITE
+    b.TextSize          = textSize or 13
+    b.Font              = Enum.Font.GothamBold
+    b.BackgroundColor3  = bgColor or C.BTN_SEND
+    b.BackgroundTransparency = 0.1
+    b.BorderSizePixel   = 0
+    b.AutoButtonColor   = false
+    b.Parent            = parent
+    AddCorner(b, 7)
+    -- Hover effect
+    b.MouseEnter:Connect(function()
+        Tween(b, {BackgroundTransparency = 0}, 0.15)
+    end)
+    b.MouseLeave:Connect(function()
+        Tween(b, {BackgroundTransparency = 0.1}, 0.15)
+    end)
+    b.MouseButton1Down:Connect(function()
+        Tween(b, {Size = UDim2.new(
+            size.X.Scale, size.X.Offset - 2,
+            size.Y.Scale, size.Y.Offset - 2
+        )}, 0.08)
+    end)
+    b.MouseButton1Up:Connect(function()
+        Tween(b, {Size = size}, 0.1)
+    end)
+    return b
+end
+
+-- Crear TextBox táctica
+local function MakeTextBox(parent, placeholder, size, pos)
+    local tb = Instance.new("TextBox")
+    tb.Size              = size
+    tb.Position          = pos
+    tb.PlaceholderText   = placeholder or "Escribe aquí..."
+    tb.PlaceholderColor3 = C.TEXT_DIM
+    tb.Text              = ""
+    tb.TextColor3        = C.TEXT_MAIN
+    tb.TextSize          = 13
+    tb.Font              = Enum.Font.Gotham
+    tb.BackgroundColor3  = C.BG_DARK
+    tb.BackgroundTransparency = 0.2
+    tb.BorderSizePixel   = 0
+    tb.ClearTextOnFocus  = false
+    tb.TextXAlignment    = Enum.TextXAlignment.Left
+    tb.Parent            = parent
+    AddCorner(tb, 6)
+    AddStroke(tb, C.BORDER, 1, 0.5)
+    AddPadding(tb, 8, 4)
+    tb.Focused:Connect(function()
+        Tween(tb, {BackgroundTransparency = 0.05}, 0.15)
+    end)
+    tb.FocusLost:Connect(function()
+        Tween(tb, {BackgroundTransparency = 0.2}, 0.15)
+    end)
+    return tb
+end
+
+-- FadeIn / FadeOut para frames
+local function FadeIn(frame, duration)
+    frame.Visible = true
+    frame.BackgroundTransparency = 1
+    Tween(frame, {BackgroundTransparency = 0.08}, duration or 0.2)
+end
+
+local function FadeOut(frame, duration, callback)
+    Tween(frame, {BackgroundTransparency = 1}, duration or 0.18)
+    task.delay(duration or 0.18, function()
+        frame.Visible = false
+        if callback then callback() end
+    end)
+end
+
+-- Header de panel con título
+local function MakeHeader(parent, title, height)
+    height = height or 36
+    local header = MakeFrame(parent,
+        UDim2.new(1,0,0,height),
+        UDim2.new(0,0,0,0),
+        C.BG_DARK, 0.0
+    )
+    AddCorner(header, 8)
+    local accent = Instance.new("Frame")
+    accent.Size             = UDim2.new(0,3,1,0)
+    accent.Position         = UDim2.new(0,0,0,0)
+    accent.BackgroundColor3 = C.ACCENT
+    accent.BorderSizePixel  = 0
+    accent.Parent           = header
+    AddCorner(accent, 2)
+    local lbl = MakeLabel(header, title,
+        UDim2.new(1,-12,1,0),
+        UDim2.new(0,12,0,0),
+        C.TEXT_ACCENT, 13, Enum.Font.GothamBold
+    )
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    return header, lbl
+end
+
+-- Hacer Frame arrastrable (drag)
+local function MakeDraggable(frame, handle, lockRef)
+    -- lockRef: función que retorna true si está bloqueado
+    local dragging, dragStart, startPos
+    local function Update(input)
+        local delta = input.Position - dragStart
+        local newPos = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+        frame.Position = newPos
+    end
+    handle.InputBegan:Connect(function(input)
+        if lockRef and lockRef() then return end
+        if input.UserInputType == Enum.UserInputType.Touch
+        or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging  = true
+            dragStart = input.Position
+            startPos  = frame.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+    handle.InputChanged:Connect(function(input)
+        if dragging and (
+            input.UserInputType == Enum.UserInputType.Touch or
+            input.UserInputType == Enum.UserInputType.MouseMovement
+        ) then
+            Update(input)
+        end
+    end)
+end
+
+-- ═══════════════════════════════════════════════
+-- [5] SCREENUI RAÍZ
+-- ═══════════════════════════════════════════════
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name              = "VXZChatGui"
+ScreenGui.ResetOnSpawn      = false
+ScreenGui.ZIndexBehavior    = Enum.ZIndexBehavior.Sibling
+ScreenGui.IgnoreGuiInset    = true
+ScreenGui.Parent            = PlayerGui
+
+-- ═══════════════════════════════════════════════
+-- [6] BOTÓN FLOTANTE PRINCIPAL
+-- ═══════════════════════════════════════════════
+
+local FloatHolder = Instance.new("Frame")
+FloatHolder.Name                   = "FloatHolder"
+FloatHolder.Size                   = UDim2.new(0, 60, 0, 60)
+FloatHolder.Position               = UDim2.new(0, State.floatConfig.posX, 0, State.floatConfig.posY)
+FloatHolder.BackgroundTransparency = 1
+FloatHolder.BorderSizePixel        = 0
+FloatHolder.Parent                 = ScreenGui
+
+-- Sombra del botón flotante
+local FloatShadow = Instance.new("ImageLabel")
+FloatShadow.Name                   = "Shadow"
+FloatShadow.Size                   = UDim2.new(1, 20, 1, 20)
+FloatShadow.Position               = UDim2.new(0,-10,0,6)
+FloatShadow.BackgroundTransparency = 1
+FloatShadow.Image                  = "rbxassetid://6015897843"
+FloatShadow.ImageColor3            = C.ACCENT
+FloatShadow.ImageTransparency      = 0.7
+FloatShadow.ScaleType              = Enum.ScaleType.Slice
+FloatShadow.SliceCenter            = Rect.new(49,49,450,450)
+FloatShadow.Parent                 = FloatHolder
+
+-- Botón flotante
+local FloatBtn = Instance.new("TextButton")
+FloatBtn.Name                   = "FloatBtn"
+FloatBtn.Size                   = UDim2.new(1,0,1,0)
+FloatBtn.Position               = UDim2.new(0,0,0,0)
+FloatBtn.Text                   = "💬"
+FloatBtn.TextSize               = 26
+FloatBtn.Font                   = Enum.Font.GothamBold
+FloatBtn.BackgroundColor3       = C.BG_MID
+FloatBtn.BackgroundTransparency = 0.0
+FloatBtn.TextColor3             = C.ACCENT
+FloatBtn.BorderSizePixel        = 0
+FloatBtn.AutoButtonColor        = false
+FloatBtn.Parent                 = FloatHolder
+AddCorner(FloatBtn, 16)
+AddStroke(FloatBtn, C.ACCENT, 1.5, 0.2)
+
+-- Ícono de candado
+local LockIcon = Instance.new("TextLabel")
+LockIcon.Name                   = "LockIcon"
+LockIcon.Size                   = UDim2.new(0,18,0,18)
+LockIcon.Position               = UDim2.new(1,-6,0,-6)
+LockIcon.Text                   = "🔓"
+LockIcon.TextSize               = 12
+LockIcon.BackgroundColor3       = C.BG_DARK
+LockIcon.BackgroundTransparency = 0.0
+LockIcon.TextColor3             = C.TEXT_MAIN
+LockIcon.Font                   = Enum.Font.Gotham
+LockIcon.ZIndex                 = 10
+LockIcon.Parent                 = FloatHolder
+AddCorner(LockIcon, 5)
+
+-- Animación idle del botón (glow pulso suave)
+local glowUp = true
+RunService.Heartbeat:Connect(function()
+    -- Solo pulso de stroke, muy ligero
+    local stroke = FloatBtn:FindFirstChildOfClass("UIStroke")
+    if stroke then
+        if glowUp then
+            stroke.Transparency = stroke.Transparency - 0.008
+            if stroke.Transparency <= 0 then glowUp = false end
+        else
+            stroke.Transparency = stroke.Transparency + 0.008
+            if stroke.Transparency >= 0.5 then glowUp = true end
+        end
+    end
+end)
+
+-- Drag del botón flotante
+MakeDraggable(FloatHolder, FloatBtn, function() return State.floatLocked end)
+
+-- Candado toggle
+LockIcon.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch
+    or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        State.floatLocked = not State.floatLocked
+        LockIcon.Text = State.floatLocked and "🔒" or "🔓"
+        Tween(LockIcon, {
+            BackgroundColor3 = State.floatLocked and C.ACCENT_DIM or C.BG_DARK
+        }, 0.2)
+        SaveData()
+    end
+end)
+
+-- Hover
+FloatBtn.MouseEnter:Connect(function()
+    Tween(FloatBtn, {BackgroundColor3 = C.ACCENT_DIM}, 0.15)
+end)
+FloatBtn.MouseLeave:Connect(function()
+    Tween(FloatBtn, {BackgroundColor3 = C.BG_MID}, 0.15)
+end)
+
+-- ═══════════════════════════════════════════════
+-- [7] GUI PRINCIPAL
+-- ═══════════════════════════════════════════════
+
+local MainGui = MakeFrame(ScreenGui,
+    UDim2.new(0, 340, 0, 460),
+    UDim2.new(0.5, -170, 0.5, -230),
+    C.BG_PANEL, 0.04
+)
+MainGui.Name    = "MainGui"
+MainGui.Visible = false
+MainGui.ZIndex  = 5
+AddCorner(MainGui, 12)
+AddStroke(MainGui, C.BORDER, 1.5, 0.3)
+
+-- Header principal
+local mainHeader = MakeFrame(MainGui,
+    UDim2.new(1,0,0,44),
+    UDim2.new(0,0,0,0),
+    C.BG_DARK, 0.0
+)
+AddCorner(mainHeader, 12)
+-- Línea de acento izquierda
+local mainAccentBar = Instance.new("Frame")
+mainAccentBar.Size             = UDim2.new(0,4,1,0)
+mainAccentBar.BackgroundColor3 = C.ACCENT
+mainAccentBar.BorderSizePixel  = 0
+mainAccentBar.Parent           = mainHeader
+AddCorner(mainAccentBar, 2)
+-- Título
+local mainTitle = MakeLabel(mainHeader,
+    "  " .. SCRIPT_NAME .. "  " .. VERSION,
+    UDim2.new(1,-90,1,0),
+    UDim2.new(0,10,0,0),
+    C.TEXT_ACCENT, 13, Enum.Font.GothamBold
+)
+mainTitle.TextXAlignment = Enum.TextXAlignment.Left
+-- Subtítulo / tag
+local mainSub = MakeLabel(mainHeader,
+    "  CHAT SYSTEM · BROOKHAVEN",
+    UDim2.new(1,-90,0,14),
+    UDim2.new(0,10,1,-16),
+    C.TEXT_DIM, 9, Enum.Font.Gotham
+)
+mainSub.TextXAlignment = Enum.TextXAlignment.Left
+
+-- Botón Ajustes
+local BtnSettings = MakeButton(mainHeader, "⚙",
+    UDim2.new(0,34,0,28),
+    UDim2.new(1,-78,0,8),
+    C.BTN_SETTINGS, C.TEXT_ACCENT, 16
+)
+-- Botón Carpeta
+local BtnFolder = MakeButton(mainHeader, "📁",
+    UDim2.new(0,34,0,28),
+    UDim2.new(1,-40,0,8),
+    C.BG_MID, C.ACCENT2, 16
+)
+-- Botón Cerrar
+local BtnCloseMain = MakeButton(mainHeader, "✕",
+    UDim2.new(0,28,0,24),
+    UDim2.new(1,-32,0,10),
+    C.BTN_CLOSE, C.WHITE, 13
+)
+-- Reposicionar para que no se sobrepongan
+BtnSettings.Position = UDim2.new(1,-104,0,8)
+BtnFolder.Position   = UDim2.new(1,-68,0,8)
+BtnCloseMain.Position= UDim2.new(1,-34,0,10)
+
+-- Línea separadora
+local sep = Instance.new("Frame")
+sep.Size             = UDim2.new(1,-20,0,1)
+sep.Position         = UDim2.new(0,10,0,44)
+sep.BackgroundColor3 = C.BORDER
+sep.BackgroundTransparency = 0.6
+sep.BorderSizePixel  = 0
+sep.Parent           = MainGui
+
+-- Instrucciones
+local infoLbl = MakeLabel(MainGui,
+    "  Selecciona un chat para abrirlo",
+    UDim2.new(1,0,0,20),
+    UDim2.new(0,0,0,48),
+    C.TEXT_DIM, 11, Enum.Font.Gotham
+)
+infoLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+-- ScrollFrame para la cuadrícula 4×4
+local ScrollChats = Instance.new("ScrollingFrame")
+ScrollChats.Name                   = "ScrollChats"
+ScrollChats.Size                   = UDim2.new(1,-8,1,-80)
+ScrollChats.Position               = UDim2.new(0,4,0,70)
+ScrollChats.BackgroundTransparency = 1
+ScrollChats.BorderSizePixel        = 0
+ScrollChats.ScrollBarThickness     = 3
+ScrollChats.ScrollBarImageColor3   = C.ACCENT
+ScrollChats.CanvasSize             = UDim2.new(0,0,0,0)
+ScrollChats.AutomaticCanvasSize    = Enum.AutomaticSize.Y
+ScrollChats.Parent                 = MainGui
+
+local GridLayout = Instance.new("UIGridLayout")
+GridLayout.CellSize    = UDim2.new(0,72,0,62)
+GridLayout.CellPadding = UDim2.new(0,6,0,6)
+GridLayout.Parent      = ScrollChats
+
+local GridPad = Instance.new("UIPadding")
+GridPad.PaddingLeft   = UDim.new(0,4)
+GridPad.PaddingTop    = UDim.new(0,4)
+GridPad.PaddingRight  = UDim.new(0,4)
+GridPad.Parent        = ScrollChats
+
+-- ═══════════════════════════════════════════════
+-- [8] INICIALIZAR STATE DE 16 CHATS
+-- ═══════════════════════════════════════════════
+
+for i = 1, 16 do
+    State.chatWindows[i] = {
+        open     = false,
+        title    = "Chat " .. i,
+        symStart = "ninguno",
+        symEnd   = "ninguno",
+        extraBtn = false,
+        extraAuto= false,
+        gui      = nil,   -- referencia a la GUI de chat
+    }
+end
+
+-- ═══════════════════════════════════════════════
+-- [9] FUNCIÓN: CREAR GUI DE CHAT INDIVIDUAL
+-- ═══════════════════════════════════════════════
+
+local function BuildChatGui(index)
+    local cw = State.chatWindows[index]
+    if cw.gui and cw.gui.Parent then
+        cw.gui.Visible = true
+        return
+    end
+
+    -- Posición en cascada para que no se superpongan
+    local offX = 20 + ((index-1) % 4) * 12
+    local offY = 80 + math.floor((index-1) / 4) * 12
+
+    local chatFrame = MakeFrame(ScreenGui,
+        UDim2.new(0, 260, 0, 220),
+        UDim2.new(0, offX, 0, offY),
+        C.BG_CARD, 0.06
+    )
+    chatFrame.Name    = "ChatWindow_"..index
+    chatFrame.Visible = true
+    chatFrame.ZIndex  = 8
+    AddCorner(chatFrame, 10)
+    AddStroke(chatFrame, C.BORDER, 1.2, 0.35)
+
+    -- Header del chat
+    local cHeader = MakeFrame(chatFrame,
+        UDim2.new(1,0,0,34),
+        UDim2.new(0,0,0,0),
+        C.BG_DARK, 0.0
+    )
+    AddCorner(cHeader, 10)
+    local cAccent = Instance.new("Frame")
+    cAccent.Size             = UDim2.new(0,3,1,0)
+    cAccent.BackgroundColor3 = C.ACCENT2
+    cAccent.BorderSizePixel  = 0
+    cAccent.Parent           = cHeader
+    AddCorner(cAccent, 2)
+
+    local cTitle = MakeLabel(cHeader,
+        "  " .. cw.title,
+        UDim2.new(1,-40,1,0),
+        UDim2.new(0,6,0,0),
+        C.ACCENT2, 12, Enum.Font.GothamBold
+    )
+    cTitle.Name = "TitleLabel"
+
+    local cNum = MakeLabel(cHeader,
+        "#"..index,
+        UDim2.new(0,24,1,0),
+        UDim2.new(1,-40,0,0),
+        C.TEXT_DIM, 10, Enum.Font.Gotham
+    )
+    cNum.TextXAlignment = Enum.TextXAlignment.Center
+
+    local cClose = MakeButton(cHeader, "✕",
+        UDim2.new(0,22,0,20),
+        UDim2.new(1,-24,0,7),
+        C.BTN_CLOSE, C.WHITE, 11
+    )
+
+    -- Símbolo indicador
+    local symLbl = MakeLabel(chatFrame,
+        "",
+        UDim2.new(1,-8,0,14),
+        UDim2.new(0,4,0,36),
+        C.TEXT_DIM, 10, Enum.Font.Gotham
+    )
+    symLbl.Name = "SymLabel"
+    symLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+    local function UpdateSymLabel()
+        local s = cw.symStart ~= "ninguno" and cw.symStart or ""
+        local e = cw.symEnd   ~= "ninguno" and cw.symEnd   or ""
+        symLbl.Text = "  [" .. s .. "] texto [" .. e .. "]"
+    end
+    UpdateSymLabel()
+
+    -- TextBox de mensaje
+    local msgBox = MakeTextBox(chatFrame,
+        "Escribe tu mensaje...",
+        UDim2.new(1,-8,0,54),
+        UDim2.new(0,4,0,52)
+    )
+    msgBox.Name         = "MsgBox"
+    msgBox.MultiLine    = true
+    msgBox.TextWrapped  = true
+
+    -- Botón Enviar
+    local sendBtn = MakeButton(chatFrame,
+        "▶  ENVIAR",
+        UDim2.new(1,-8,0,28),
+        UDim2.new(0,4,0,110),
+        C.BTN_SEND, C.WHITE, 12
+    )
+    sendBtn.Name = "SendBtn"
+
+    -- Botón Extra (oculto por defecto)
+    local extraBtnObj = MakeButton(chatFrame,
+        "★ EXTRA",
+        UDim2.new(1,-8,0,24),
+        UDim2.new(0,4,0,142),
+        C.ORANGE, C.WHITE, 12
+    )
+    extraBtnObj.Name    = "ExtraBtn"
+    extraBtnObj.Visible = cw.extraBtn
+
+    -- Log de mensajes enviados (mini historial)
+    local logFrame = MakeFrame(chatFrame,
+        UDim2.new(1,-8,0,32),
+        UDim2.new(0,4,0,170),
+        C.BG_DARK, 0.2
+    )
+    AddCorner(logFrame, 6)
+    local logLbl = MakeLabel(logFrame,
+        "  Sin mensajes aún",
+        UDim2.new(1,0,1,0),
+        UDim2.new(0,0,0,0),
+        C.TEXT_DIM, 10, Enum.Font.Gotham
+    )
+    logLbl.Name = "LogLabel"
+    logLbl.TextXAlignment = Enum.TextXAlignment.Left
+    logLbl.TextTruncate   = Enum.TextTruncate.AtEnd
+
+    -- Drag
+    MakeDraggable(chatFrame, cHeader)
+
+    -- Lógica Enviar
+    local function DoSend()
+        local raw = msgBox.Text
+        if raw == "" then return end
+        local s = cw.symStart ~= "ninguno" and cw.symStart or ""
+        local e = cw.symEnd   ~= "ninguno" and cw.symEnd   or ""
+        local msg = s .. raw .. e
+        SendChat(msg)
+        logLbl.Text = "  ✓ " .. msg
+        logLbl.TextColor3 = C.ACCENT2
+        Tween(logLbl, {TextColor3 = C.TEXT_DIM}, 2.0)
+        msgBox.Text = ""
+        -- Si extraAuto, también dispara el extra
+        if cw.extraAuto and extraBtnObj.Visible then
+            -- placeholder para acción extra
+        end
+    end
+
+    sendBtn.MouseButton1Click:Connect(DoSend)
+    extraBtnObj.MouseButton1Click:Connect(function()
+        -- Acción extra configurable (placeholder)
+        Tween(extraBtnObj, {BackgroundColor3 = C.GREEN}, 0.1)
+        task.delay(0.3, function()
+            Tween(extraBtnObj, {BackgroundColor3 = C.ORANGE}, 0.2)
+        end)
+    end)
+
+    cClose.MouseButton1Click:Connect(function()
+        Tween(chatFrame, {BackgroundTransparency = 1}, 0.18)
+        task.delay(0.2, function()
+            chatFrame.Visible = false
+        end)
+        cw.open = false
+    end)
+
+    cw.gui = chatFrame
+    cw.open = true
+
+    -- FadeIn
+    chatFrame.BackgroundTransparency = 1
+    Tween(chatFrame, {BackgroundTransparency = 0.06}, 0.22)
+
+    return chatFrame
+end
+
+-- ═══════════════════════════════════════════════
+-- [10] TARJETAS 4×4 EN LA CUADRÍCULA
+-- ═══════════════════════════════════════════════
+
+for i = 1, 16 do
+    local card = Instance.new("TextButton")
+    card.Name                   = "ChatCard_"..i
+    card.Size                   = UDim2.new(0,72,0,62)
+    card.Text                   = ""
+    card.BackgroundColor3       = C.BG_CARD
+    card.BackgroundTransparency = 0.1
+    card.BorderSizePixel        = 0
+    card.AutoButtonColor        = false
+    card.Parent                 = ScrollChats
+    AddCorner(card, 8)
+    AddStroke(card, C.BORDER_DIM, 1, 0.4)
+
+    -- Número grande
+    local numLbl = Instance.new("TextLabel")
+    numLbl.Size                   = UDim2.new(1,0,0,28)
+    numLbl.Position               = UDim2.new(0,0,0,4)
+    numLbl.Text                   = tostring(i)
+    numLbl.TextColor3             = C.ACCENT
+    numLbl.TextSize               = 18
+    numLbl.Font                   = Enum.Font.GothamBold
+    numLbl.BackgroundTransparency = 1
+    numLbl.TextXAlignment         = Enum.TextXAlignment.Center
+    numLbl.Parent                 = card
+
+    -- Título corto
+    local titleLbl = Instance.new("TextLabel")
+    titleLbl.Name                   = "TitleCard_"..i
+    titleLbl.Size                   = UDim2.new(1,-4,0,16)
+    titleLbl.Position               = UDim2.new(0,2,0,32)
+    titleLbl.Text                   = State.chatWindows[i].title
+    titleLbl.TextColor3             = C.TEXT_DIM
+    titleLbl.TextSize               = 9
+    titleLbl.Font                   = Enum.Font.Gotham
+    titleLbl.BackgroundTransparency = 1
+    titleLbl.TextXAlignment         = Enum.TextXAlignment.Center
+    titleLbl.TextTruncate           = Enum.TextTruncate.AtEnd
+    titleLbl.Parent                 = card
+
+    -- Hover
+    card.MouseEnter:Connect(function()
+        Tween(card, {BackgroundColor3 = C.ACCENT_DIM, BackgroundTransparency = 0}, 0.15)
+    end)
+    card.MouseLeave:Connect(function()
+        Tween(card, {BackgroundColor3 = C.BG_CARD, BackgroundTransparency = 0.1}, 0.15)
+    end)
+    card.MouseButton1Click:Connect(function()
+        BuildChatGui(i)
+    end)
+end
+
+-- ═══════════════════════════════════════════════
+-- [11] ABRIR / CERRAR MAIN GUI
+-- ═══════════════════════════════════════════════
+
+FloatBtn.MouseButton1Click:Connect(function()
+    State.mainOpen = not State.mainOpen
+    if State.mainOpen then
+        MainGui.Visible = true
+        MainGui.BackgroundTransparency = 1
+        Tween(MainGui, {BackgroundTransparency = 0.04}, 0.22)
+    else
+        Tween(MainGui, {BackgroundTransparency = 1}, 0.18)
+        task.delay(0.2, function() MainGui.Visible = false end)
+    end
+end)
+
+BtnCloseMain.MouseButton1Click:Connect(function()
+    State.mainOpen = false
+    Tween(MainGui, {BackgroundTransparency = 1}, 0.18)
+    task.delay(0.2, function() MainGui.Visible = false end)
+end)
+
+-- ═══════════════════════════════════════════════
+-- [12] PANEL DE AJUSTES
+-- ═══════════════════════════════════════════════
+
+local SettingsPanel = MakeFrame(ScreenGui,
+    UDim2.new(0, 320, 0, 440),
+    UDim2.new(0.5, -160, 0.5, -220),
+    C.BG_PANEL, 0.04
+)
+SettingsPanel.Name    = "SettingsPanel"
+SettingsPanel.Visible = false
+SettingsPanel.ZIndex  = 10
+AddCorner(SettingsPanel, 12)
+AddStroke(SettingsPanel, C.BORDER, 1.5, 0.3)
+
+local sHeader, sTitle = MakeHeader(SettingsPanel, "  ⚙  AJUSTES  ·  " .. SCRIPT_NAME, 40)
+sTitle.TextSize = 12
+
+local BtnCloseSettings = MakeButton(SettingsPanel, "✕",
+    UDim2.new(0,26,0,22),
+    UDim2.new(1,-30,0,9),
+    C.BTN_CLOSE, C.WHITE, 12
+)
+
+local SettingsScroll = Instance.new("ScrollingFrame")
+SettingsScroll.Size                   = UDim2.new(1,-8,1,-52)
+SettingsScroll.Position               = UDim2.new(0,4,0,48)
+SettingsScroll.BackgroundTransparency = 1
+SettingsScroll.BorderSizePixel        = 0
+SettingsScroll.ScrollBarThickness     = 3
+SettingsScroll.ScrollBarImageColor3   = C.ACCENT
+SettingsScroll.CanvasSize             = UDim2.new(0,0,0,700)
+SettingsScroll.Parent                 = SettingsPanel
+
+local SList = Instance.new("UIListLayout")
+SList.Padding         = UDim.new(0, 8)
+SList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+SList.Parent          = SettingsScroll
+
+local SListPad = Instance.new("UIPadding")
+SListPad.PaddingTop  = UDim.new(0,6)
+SListPad.PaddingLeft = UDim.new(0,4)
+SListPad.Parent      = SettingsScroll
+
+-- ─── SECCIÓN A: Modificar Símbolos ───
+
+local secA = MakeFrame(SettingsScroll, UDim2.new(1,-8,0,36), UDim2.new(0,0,0,0), C.BG_DARK, 0.0)
+secA.Size = UDim2.new(1,-8,0,36)
+AddCorner(secA, 8)
+local secALbl = MakeLabel(secA, "  A · SÍMBOLOS  I / F",
+    UDim2.new(1,-110,1,0), UDim2.new(0,0,0,0),
+    C.ACCENT, 12, Enum.Font.GothamBold)
+
+local BtnOpenSymbols = MakeButton(secA, "MODIFICAR SÍMBOLOS I/F",
+    UDim2.new(0,170,0,26),
+    UDim2.new(1,-174,0,5),
+    C.BTN_SEND, C.WHITE, 11
+)
+
+-- ─── SECCIÓN B: Editar Títulos ───
+
+local secB = MakeFrame(SettingsScroll, UDim2.new(1,-8,0,200), UDim2.new(0,0,0,0), C.BG_DARK, 0.0)
+secB.Size = UDim2.new(1,-8,0,200)
+AddCorner(secB, 8)
+MakeLabel(secB, "  B · EDITAR TÍTULOS",
+    UDim2.new(1,0,0,20), UDim2.new(0,0,0,2),
+    C.ACCENT, 12, Enum.Font.GothamBold)
+
+-- ScrollFrame para los 16 títulos
+local TitleScroll = Instance.new("ScrollingFrame")
+TitleScroll.Size                   = UDim2.new(1,-8,1,-26)
+TitleScroll.Position               = UDim2.new(0,4,0,24)
+TitleScroll.BackgroundTransparency = 1
+TitleScroll.BorderSizePixel        = 0
+TitleScroll.ScrollBarThickness     = 2
+TitleScroll.ScrollBarImageColor3   = C.ACCENT
+TitleScroll.CanvasSize             = UDim2.new(0,0,0,0)
+TitleScroll.AutomaticCanvasSize    = Enum.AutomaticSize.Y
+TitleScroll.Parent                 = secB
+
+local TList = Instance.new("UIListLayout")
+TList.Padding = UDim.new(0,4)
+TList.Parent  = TitleScroll
+
+local titleBoxes = {}
+for i = 1, 16 do
+    local row = MakeFrame(TitleScroll, UDim2.new(1,0,0,26), UDim2.new(0,0,0,0), C.BG_MID, 0.3)
+    AddCorner(row, 5)
+    local lbl = MakeLabel(row, "#"..i,
+        UDim2.new(0,22,1,0), UDim2.new(0,2,0,0),
+        C.TEXT_DIM, 10, Enum.Font.Gotham)
+    lbl.TextXAlignment = Enum.TextXAlignment.Center
+    local tb = MakeTextBox(row, "Chat "..i,
+        UDim2.new(1,-60,0,20),
+        UDim2.new(0,24,0,3)
+    )
+    tb.Text = State.chatWindows[i].title
+    titleBoxes[i] = tb
+
+    local saveBtn = MakeButton(row, "✓",
+        UDim2.new(0,26,0,20),
+        UDim2.new(1,-28,0,3),
+        C.GREEN, C.WHITE, 12
+    )
+    saveBtn.MouseButton1Click:Connect(function()
+        local newTitle = tb.Text
+        if newTitle ~= "" then
+            State.chatWindows[i].title = newTitle
+            -- Actualizar tarjeta en cuadrícula
+            local card = ScrollChats:FindFirstChild("ChatCard_"..i)
+            if card then
+                local tl = card:FindFirstChild("TitleCard_"..i)
+                if tl then tl.Text = newTitle end
+            end
+            -- Actualizar header de la GUI de chat si está abierta
+            local cw = State.chatWindows[i]
+            if cw.gui then
+                local h = cw.gui:FindFirstChild("TitleLabel", true)
+                if h then h.Text = "  " .. newTitle end
+            end
+            SaveData()
+        end
+    end)
+end
+
+-- ─── SECCIÓN C: Botón Extra ───
+
+local secC = MakeFrame(SettingsScroll, UDim2.new(1,-8,0,180), UDim2.new(0,0,0,0), C.BG_DARK, 0.0)
+secC.Size = UDim2.new(1,-8,0,180)
+AddCorner(secC, 8)
+MakeLabel(secC, "  C · BOTÓN EXTRA",
+    UDim2.new(1,0,0,20), UDim2.new(0,0,0,2),
+    C.ACCENT, 12, Enum.Font.GothamBold)
+
+local ExtraScroll = Instance.new("ScrollingFrame")
+ExtraScroll.Size                   = UDim2.new(1,-8,1,-26)
+ExtraScroll.Position               = UDim2.new(0,4,0,24)
+ExtraScroll.BackgroundTransparency = 1
+ExtraScroll.BorderSizePixel        = 0
+ExtraScroll.ScrollBarThickness     = 2
+ExtraScroll.ScrollBarImageColor3   = C.ACCENT
+ExtraScroll.CanvasSize             = UDim2.new(0,0,0,0)
+ExtraScroll.AutomaticCanvasSize    = Enum.AutomaticSize.Y
+ExtraScroll.Parent                 = secC
+
+local EList = Instance.new("UIListLayout")
+EList.Padding = UDim.new(0,4)
+EList.Parent  = ExtraScroll
+
+for i = 1, 16 do
+    local row = MakeFrame(ExtraScroll, UDim2.new(1,0,0,26), UDim2.new(0,0,0,0), C.BG_MID, 0.3)
+    AddCorner(row, 5)
+    MakeLabel(row, "Chat #"..i,
+        UDim2.new(0,54,1,0), UDim2.new(0,4,0,0),
+        C.TEXT_DIM, 10, Enum.Font.Gotham)
+
+    local togBtn = MakeButton(row,
+        State.chatWindows[i].extraBtn and "ON" or "OFF",
+        UDim2.new(0,36,0,20),
+        UDim2.new(0,58,0,3),
+        State.chatWindows[i].extraBtn and C.GREEN or C.BTN_CLOSE, C.WHITE, 11
+    )
+    local autoBtn = MakeButton(row,
+        State.chatWindows[i].extraAuto and "AUTO" or "MANUAL",
+        UDim2.new(0,56,0,20),
+        UDim2.new(0,98,0,3),
+        C.BTN_SETTINGS, C.TEXT_ACCENT, 10
+    )
+    local _i = i
+    togBtn.MouseButton1Click:Connect(function()
+        State.chatWindows[_i].extraBtn = not State.chatWindows[_i].extraBtn
+        local on = State.chatWindows[_i].extraBtn
+        togBtn.Text             = on and "ON" or "OFF"
+        togBtn.BackgroundColor3 = on and C.GREEN or C.BTN_CLOSE
+        -- Mostrar/ocultar en GUI de chat si está abierta
+        local cw = State.chatWindows[_i]
+        if cw.gui then
+            local eb = cw.gui:FindFirstChild("ExtraBtn")
+            if eb then eb.Visible = on end
+        end
+        SaveData()
+    end)
+    autoBtn.MouseButton1Click:Connect(function()
+        State.chatWindows[_i].extraAuto = not State.chatWindows[_i].extraAuto
+        autoBtn.Text = State.chatWindows[_i].extraAuto and "AUTO" or "MANUAL"
+        SaveData()
+    end)
+end
+
+-- Toggle Settings panel
+BtnSettings.MouseButton1Click:Connect(function()
+    State.settingsOpen = not State.settingsOpen
+    if State.settingsOpen then
+        SettingsPanel.Visible = true
+        SettingsPanel.BackgroundTransparency = 1
+        Tween(SettingsPanel, {BackgroundTransparency = 0.04}, 0.22)
+    else
+        Tween(SettingsPanel, {BackgroundTransparency = 1}, 0.18)
+        task.delay(0.2, function() SettingsPanel.Visible = false end)
+    end
+end)
+
+BtnCloseSettings.MouseButton1Click:Connect(function()
+    State.settingsOpen = false
+    Tween(SettingsPanel, {BackgroundTransparency = 1}, 0.18)
+    task.delay(0.2, function() SettingsPanel.Visible = false end)
+end)
+
+-- ═══════════════════════════════════════════════
+-- [13] PANEL MODIFICAR SÍMBOLOS
+-- ═══════════════════════════════════════════════
+
+local SymbolsPanel = MakeFrame(ScreenGui,
+    UDim2.new(0, 340, 0, 460),
+    UDim2.new(0.5, -170, 0.5, -230),
+    C.BG_PANEL, 0.04
+)
+SymbolsPanel.Name    = "SymbolsPanel"
+SymbolsPanel.Visible = false
+SymbolsPanel.ZIndex  = 12
+AddCorner(SymbolsPanel, 12)
+AddStroke(SymbolsPanel, C.ACCENT, 1.5, 0.25)
+
+local symHeader, symTitle = MakeHeader(SymbolsPanel, "  ◈  MODIFICAR SÍMBOLOS  I / F", 40)
+symTitle.TextSize = 11
+
+local BtnCloseSymbols = MakeButton(SymbolsPanel, "✕",
+    UDim2.new(0,26,0,22),
+    UDim2.new(1,-30,0,9),
+    C.BTN_CLOSE, C.WHITE, 12
+)
+
+local BtnSaveAllSymbols = MakeButton(SymbolsPanel,
+    "💾  GUARDAR TODO",
+    UDim2.new(1,-16,0,28),
+    UDim2.new(0,8,0,44),
+    C.GREEN, C.WHITE, 12
+)
+
+-- ScrollFrame para los 16 chats
+local SymScroll = Instance.new("ScrollingFrame")
+SymScroll.Size                   = UDim2.new(1,-8,1,-82)
+SymScroll.Position               = UDim2.new(0,4,0,80)
+SymScroll.BackgroundTransparency = 1
+SymScroll.BorderSizePixel        = 0
+SymScroll.ScrollBarThickness     = 3
+SymScroll.ScrollBarImageColor3   = C.ACCENT
+SymScroll.CanvasSize             = UDim2.new(0,0,0,0)
+SymScroll.AutomaticCanvasSize    = Enum.AutomaticSize.Y
+SymScroll.Parent                 = SymbolsPanel
+
+local SymList = Instance.new("UIListLayout")
+SymList.Padding = UDim.new(0,6)
+SymList.Parent  = SymScroll
+
+local SymPad = Instance.new("UIPadding")
+SymPad.PaddingTop  = UDim.new(0,4)
+SymPad.PaddingLeft = UDim.new(0,4)
+SymPad.Parent      = SymScroll
+
+-- Selector de símbolo para cada chat
+local symSelections = {}  -- [i] = { start=idx, end_=idx }
+
+for i = 1, 16 do
+    symSelections[i] = { start = 8, end_ = 8 }  -- default "ninguno"
+    -- Buscar símbolo actual en el array
+    for si, sv in ipairs(SYMBOLS) do
+        if sv == State.chatWindows[i].symStart then symSelections[i].start = si end
+        if sv == State.chatWindows[i].symEnd   then symSelections[i].end_  = si end
+    end
+
+    local row = MakeFrame(SymScroll, UDim2.new(1,-4,0,52), UDim2.new(0,0,0,0), C.BG_CARD, 0.1)
+    AddCorner(row, 8)
+
+    MakeLabel(row, "Chat #"..i .. "  —  " .. State.chatWindows[i].title,
+        UDim2.new(1,-8,0,16), UDim2.new(0,4,0,2),
+        C.TEXT_ACCENT, 11, Enum.Font.GothamBold)
+
+    -- Label Inicio
+    MakeLabel(row, "INICIO:",
+        UDim2.new(0,44,0,16), UDim2.new(0,4,0,20),
+        C.TEXT_DIM, 10, Enum.Font.Gotham)
+    -- Label Fin
+    MakeLabel(row, "FIN:",
+        UDim2.new(0,30,0,16), UDim2.new(0.5,2,0,20),
+        C.TEXT_DIM, 10, Enum.Font.Gotham)
+
+    -- Dropdown inicio
+    local startBtn = MakeButton(row,
+        SYMBOLS[symSelections[i].start],
+        UDim2.new(0,80,0,18),
+        UDim2.new(0,44,0,20),
+        C.BG_MID, C.ACCENT, 11
+    )
+    -- Dropdown fin
+    local endBtn = MakeButton(row,
+        SYMBOLS[symSelections[i].end_],
+        UDim2.new(0,80,0,18),
+        UDim2.new(0.5,30,0,20),
+        C.BG_MID, C.ACCENT2, 11
+    )
+
+    local _i = i
+    -- Ciclar símbolo inicio
+    startBtn.MouseButton1Click:Connect(function()
+        symSelections[_i].start = (symSelections[_i].start % #SYMBOLS) + 1
+        startBtn.Text = SYMBOLS[symSelections[_i].start]
+    end)
+    -- Ciclar símbolo fin
+    endBtn.MouseButton1Click:Connect(function()
+        symSelections[_i].end_ = (symSelections[_i].end_ % #SYMBOLS) + 1
+        endBtn.Text = SYMBOLS[symSelections[_i].end_]
+    end)
+end
+
+BtnSaveAllSymbols.MouseButton1Click:Connect(function()
+    for i = 1, 16 do
+        State.chatWindows[i].symStart = SYMBOLS[symSelections[i].start]
+        State.chatWindows[i].symEnd   = SYMBOLS[symSelections[i].end_]
+        -- Actualizar label de símbolo en GUI abierta
+        local cw = State.chatWindows[i]
+        if cw.gui then
+            local sl = cw.gui:FindFirstChild("SymLabel")
+            if sl then
+                local s = cw.symStart ~= "ninguno" and cw.symStart or ""
+                local e = cw.symEnd   ~= "ninguno" and cw.symEnd   or ""
+                sl.Text = "  [" .. s .. "] texto [" .. e .. "]"
+            end
+        end
+    end
+    SaveData()
+    -- Flash verde en el botón
+    Tween(BtnSaveAllSymbols, {BackgroundColor3 = C.ACCENT}, 0.1)
+    task.delay(0.5, function()
+        Tween(BtnSaveAllSymbols, {BackgroundColor3 = C.GREEN}, 0.3)
+    end)
+end)
+
+BtnOpenSymbols.MouseButton1Click:Connect(function()
+    SymbolsPanel.Visible = true
+    SymbolsPanel.BackgroundTransparency = 1
+    Tween(SymbolsPanel, {BackgroundTransparency = 0.04}, 0.22)
+end)
+
+BtnCloseSymbols.MouseButton1Click:Connect(function()
+    Tween(SymbolsPanel, {BackgroundTransparency = 1}, 0.18)
+    task.delay(0.2, function() SymbolsPanel.Visible = false end)
+end)
+
+-- ═══════════════════════════════════════════════
+-- [14] SISTEMA DE CARPETAS / MÓDULOS
+-- ═══════════════════════════════════════════════
+
+local FolderPanel = MakeFrame(ScreenGui,
+    UDim2.new(0, 330, 0, 500),
+    UDim2.new(0.5, -165, 0.5, -250),
+    C.BG_PANEL, 0.04
+)
+FolderPanel.Name    = "FolderPanel"
+FolderPanel.Visible = false
+FolderPanel.ZIndex  = 10
+AddCorner(FolderPanel, 12)
+AddStroke(FolderPanel, C.ACCENT2, 1.5, 0.3)
+
+local fHeader, fTitle = MakeHeader(FolderPanel, "  📁  CARPETA  ·  MÓDULOS", 40)
+fTitle.TextSize = 12
+
+local BtnCloseFolder = MakeButton(FolderPanel, "✕",
+    UDim2.new(0,26,0,22),
+    UDim2.new(1,-30,0,9),
+    C.BTN_CLOSE, C.WHITE, 12
+)
+
+local FolderScroll = Instance.new("ScrollingFrame")
+FolderScroll.Size                   = UDim2.new(1,-8,1,-52)
+FolderScroll.Position               = UDim2.new(0,4,0,48)
+FolderScroll.BackgroundTransparency = 1
+FolderScroll.BorderSizePixel        = 0
+FolderScroll.ScrollBarThickness     = 3
+FolderScroll.ScrollBarImageColor3   = C.ACCENT2
+FolderScroll.CanvasSize             = UDim2.new(0,0,0,800)
+FolderScroll.Parent                 = FolderPanel
+
+local FList = Instance.new("UIListLayout")
+FList.Padding = UDim.new(0,8)
+FList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+FList.Parent  = FolderScroll
+
+local FListPad = Instance.new("UIPadding")
+FListPad.PaddingTop  = UDim.new(0,6)
+FListPad.PaddingLeft = UDim.new(0,4)
+FListPad.Parent      = FolderScroll
+
+-- ─── [14A] Config botón flotante ───
+
+local cfgBtnSec = MakeFrame(FolderScroll, UDim2.new(1,-8,0,200), UDim2.new(0,0,0,0), C.BG_DARK, 0.0)
+cfgBtnSec.Size = UDim2.new(1,-8,0,200)
+AddCorner(cfgBtnSec, 8)
+MakeLabel(cfgBtnSec, "  ◉  CONFIG. BOTÓN FLOTANTE",
+    UDim2.new(1,0,0,18), UDim2.new(0,0,0,2),
+    C.ACCENT, 12, Enum.Font.GothamBold)
+
+-- Tamaño
+MakeLabel(cfgBtnSec, "Tamaño:", UDim2.new(0,60,0,16), UDim2.new(0,4,0,22), C.TEXT_DIM, 11, Enum.Font.Gotham)
+local sizeBox = MakeTextBox(cfgBtnSec, "54", UDim2.new(0,60,0,20), UDim2.new(0,66,0,22))
+sizeBox.Text = tostring(State.floatConfig.size)
+
+-- Emoji
+MakeLabel(cfgBtnSec, "Emoji:", UDim2.new(0,50,0,16), UDim2.new(0,4,0,46), C.TEXT_DIM, 11, Enum.Font.Gotham)
+local emojiBox = MakeTextBox(cfgBtnSec, "💬", UDim2.new(0,60,0,20), UDim2.new(0,54,0,46))
+emojiBox.Text = State.floatConfig.emoji
+
+-- Transparencia
+MakeLabel(cfgBtnSec, "Transparencia (0-1):", UDim2.new(0,140,0,16), UDim2.new(0,4,0,70), C.TEXT_DIM, 10, Enum.Font.Gotham)
+local alphaBox = MakeTextBox(cfgBtnSec, "0", UDim2.new(0,50,0,20), UDim2.new(0,146,0,70))
+alphaBox.Text = tostring(State.floatConfig.alpha)
+
+-- Animación toggle
+local animBtn = MakeButton(cfgBtnSec,
+    State.floatConfig.anim and "ANIM: ON" or "ANIM: OFF",
+    UDim2.new(0,100,0,24), UDim2.new(0,4,0,96),
+    State.floatConfig.anim and C.GREEN or C.BTN_CLOSE, C.WHITE, 11
+)
+animBtn.MouseButton1Click:Connect(function()
+    State.floatConfig.anim = not State.floatConfig.anim
+    animBtn.Text             = State.floatConfig.anim and "ANIM: ON" or "ANIM: OFF"
+    animBtn.BackgroundColor3 = State.floatConfig.anim and C.GREEN or C.BTN_CLOSE
+    SaveData()
+end)
+
+-- Aplicar config botón
+local applyFloatBtn = MakeButton(cfgBtnSec,
+    "✓ APLICAR CONFIG",
+    UDim2.new(1,-8,0,28), UDim2.new(0,4,0,126),
+    C.BTN_SEND, C.WHITE, 12
+)
+applyFloatBtn.MouseButton1Click:Connect(function()
+    local sz = tonumber(sizeBox.Text) or 54
+    sz = math.clamp(sz, 30, 90)
+    State.floatConfig.size  = sz
+    State.floatConfig.emoji = emojiBox.Text ~= "" and emojiBox.Text or "💬"
+    State.floatConfig.alpha = tonumber(alphaBox.Text) or 0
+
+    FloatHolder.Size = UDim2.new(0, sz, 0, sz)
+    FloatBtn.Text    = State.floatConfig.emoji
+    FloatBtn.BackgroundTransparency = State.floatConfig.alpha
+    AddCorner(FloatBtn, sz / 3.5)
+    SaveData()
+end)
+
+-- ─── [14B] Create TextBox dinámico ───
+
+local tbSec = MakeFrame(FolderScroll, UDim2.new(1,-8,0,260), UDim2.new(0,0,0,0), C.BG_DARK, 0.0)
+tbSec.Size = UDim2.new(1,-8,0,260)
+AddCorner(tbSec, 8)
+MakeLabel(tbSec, "  ◈  CREATE TEXTBOX  (máx 5)",
+    UDim2.new(1,0,0,18), UDim2.new(0,0,0,2),
+    C.ACCENT2, 12, Enum.Font.GothamBold)
+
+local tbCount = #State.textboxes
+
+local tbCountLbl = MakeLabel(tbSec,
+    "TextBoxes creados: " .. tbCount .. " / 5",
+    UDim2.new(1,-8,0,14), UDim2.new(0,4,0,22),
+    C.TEXT_DIM, 10, Enum.Font.Gotham)
+
+-- Configuración del nuevo TextBox
+MakeLabel(tbSec, "Título:", UDim2.new(0,46,0,16), UDim2.new(0,4,0,40), C.TEXT_DIM, 11, Enum.Font.Gotham)
+local newTbTitle = MakeTextBox(tbSec, "Mi TextBox", UDim2.new(0,120,0,20), UDim2.new(0,52,0,40))
+
+MakeLabel(tbSec, "Ancho:", UDim2.new(0,42,0,16), UDim2.new(0,4,0,64), C.TEXT_DIM, 11, Enum.Font.Gotham)
+local newTbW = MakeTextBox(tbSec, "220", UDim2.new(0,50,0,20), UDim2.new(0,48,0,64))
+newTbW.Text = "220"
+
+MakeLabel(tbSec, "Alto:", UDim2.new(0,34,0,16), UDim2.new(0,100,0,64), C.TEXT_DIM, 11, Enum.Font.Gotham)
+local newTbH = MakeTextBox(tbSec, "180", UDim2.new(0,50,0,20), UDim2.new(0,134,0,64))
+newTbH.Text = "180"
+
+-- Limpiar al enviar
+local clearToggle = MakeButton(tbSec,
+    "LIMPIAR AL ENVIAR: SÍ",
+    UDim2.new(1,-8,0,24), UDim2.new(0,4,0,88),
+    C.BTN_SETTINGS, C.TEXT_ACCENT, 11
+)
+local clearOnSend = true
+clearToggle.MouseButton1Click:Connect(function()
+    clearOnSend = not clearOnSend
+    clearToggle.Text = clearOnSend and "LIMPIAR AL ENVIAR: SÍ" or "LIMPIAR AL ENVIAR: NO"
+end)
+
+-- Selector símbolo para el nuevo TextBox
+local newTbSymStart = 8
+local newTbSymEnd   = 8
+local newTbSymStartBtn = MakeButton(tbSec,
+    "INICIO: " .. SYMBOLS[newTbSymStart],
+    UDim2.new(0,130,0,22), UDim2.new(0,4,0,116),
+    C.BG_MID, C.ACCENT, 11
+)
+local newTbSymEndBtn = MakeButton(tbSec,
+    "FIN: " .. SYMBOLS[newTbSymEnd],
+    UDim2.new(0,130,0,22), UDim2.new(0,138,0,116),
+    C.BG_MID, C.ACCENT2, 11
+)
+newTbSymStartBtn.MouseButton1Click:Connect(function()
+    newTbSymStart = (newTbSymStart % #SYMBOLS) + 1
+    newTbSymStartBtn.Text = "INICIO: " .. SYMBOLS[newTbSymStart]
+end)
+newTbSymEndBtn.MouseButton1Click:Connect(function()
+    newTbSymEnd = (newTbSymEnd % #SYMBOLS) + 1
+    newTbSymEndBtn.Text = "FIN: " .. SYMBOLS[newTbSymEnd]
+end)
+
+-- Función crear TextBox dinámico
+local dynamicTBList = {}  -- referencia a los frames creados
+
+local function CreateDynamicTextBox(cfg)
+    if #dynamicTBList >= 5 then
+        tbCountLbl.Text = "TextBoxes creados: 5 / 5  (máximo alcanzado)"
+        tbCountLbl.TextColor3 = C.BTN_CLOSE
+        return
+    end
+
+    local idx = #dynamicTBList + 1
+    local w   = math.clamp(cfg.w or 220, 140, 300)
+    local h   = math.clamp(cfg.h or 180, 120, 260)
+
+    local dtFrame = MakeFrame(ScreenGui,
+        UDim2.new(0,w,0,h),
+        UDim2.new(0, 50 + (idx-1)*16, 0, 100 + (idx-1)*16),
+        C.BG_CARD, 0.06
+    )
+    dtFrame.Name  = "DynamicTB_"..idx
+    dtFrame.ZIndex = 9
+    AddCorner(dtFrame, 10)
+    AddStroke(dtFrame, C.ACCENT2, 1.2, 0.35)
+
+    -- Header arrastrable
+    local dtHeader = MakeFrame(dtFrame,
+        UDim2.new(1,0,0,30),
+        UDim2.new(0,0,0,0),
+        C.BG_DARK, 0.0
+    )
+    AddCorner(dtHeader, 10)
+    local dtAccent = Instance.new("Frame")
+    dtAccent.Size             = UDim2.new(0,3,1,0)
+    dtAccent.BackgroundColor3 = C.ACCENT2
+    dtAccent.BorderSizePixel  = 0
+    dtAccent.Parent           = dtHeader
+
+    local dtTitle = MakeLabel(dtHeader, "  " .. (cfg.title or "TextBox"),
+        UDim2.new(1,-36,1,0), UDim2.new(0,4,0,0),
+        C.ACCENT2, 11, Enum.Font.GothamBold)
+
+    local dtClose = MakeButton(dtHeader, "✕",
+        UDim2.new(0,22,0,20), UDim2.new(1,-24,0,5),
+        C.BTN_CLOSE, C.WHITE, 11
+    )
+
+    -- Lock
+    local dtLock = Instance.new("TextLabel")
+    dtLock.Size             = UDim2.new(0,16,0,16)
+    dtLock.Position         = UDim2.new(1,-40,0,7)
+    dtLock.Text             = "🔓"
+    dtLock.TextSize         = 11
+    dtLock.BackgroundColor3 = C.BG_MID
+    dtLock.TextColor3       = C.TEXT_DIM
+    dtLock.Font             = Enum.Font.Gotham
+    dtLock.BackgroundTransparency = 0.2
+    dtLock.ZIndex = 12
+    dtLock.Parent = dtHeader
+    AddCorner(dtLock, 4)
+
+    -- Sym label
+    local dtSymLbl = MakeLabel(dtFrame, "",
+        UDim2.new(1,-8,0,12), UDim2.new(0,4,0,32),
+        C.TEXT_DIM, 9, Enum.Font.Gotham)
+    local s = cfg.symStart ~= "ninguno" and cfg.symStart or ""
+    local e = cfg.symEnd   ~= "ninguno" and cfg.symEnd   or ""
+    dtSymLbl.Text = "  ["..s.."] msg ["..e.."]"
+
+    -- TextBox
+    local dtBox = MakeTextBox(dtFrame,
+        "Escribe aquí...",
+        UDim2.new(1,-8,1,-82), UDim2.new(0,4,0,46)
+    )
+    dtBox.MultiLine   = true
+    dtBox.TextWrapped = true
+
+    -- Enviar
+    local dtSend = MakeButton(dtFrame, "▶ ENVIAR",
+        UDim2.new(1,-8,0,26), UDim2.new(0,4,1,-32),
+        C.BTN_SEND, C.WHITE, 12
+    )
+
+    -- Eliminar
+    local dtDel = MakeButton(dtFrame, "🗑",
+        UDim2.new(0,26,0,26), UDim2.new(1,-30,1,-32),
+        C.BTN_CLOSE, C.WHITE, 13
+    )
+
+    -- Lock drag
+    local dtLocked = false
+    dtLock.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch
+        or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dtLocked = not dtLocked
+            dtLock.Text = dtLocked and "🔒" or "🔓"
+        end
+    end)
+
+    MakeDraggable(dtFrame, dtHeader, function() return dtLocked end)
+
+    dtSend.MouseButton1Click:Connect(function()
+        local raw = dtBox.Text
+        if raw == "" then return end
+        local ss = cfg.symStart ~= "ninguno" and cfg.symStart or ""
+        local se = cfg.symEnd   ~= "ninguno" and cfg.symEnd   or ""
+        SendChat(ss .. raw .. se)
+        if cfg.clearOnSend then dtBox.Text = "" end
+    end)
+
+    dtClose.MouseButton1Click:Connect(function()
+        Tween(dtFrame, {BackgroundTransparency = 1}, 0.18)
+        task.delay(0.2, function() dtFrame.Visible = false end)
+    end)
+
+    dtDel.MouseButton1Click:Connect(function()
+        -- Eliminar de la lista
+        for k, v in ipairs(dynamicTBList) do
+            if v.frame == dtFrame then
+                table.remove(dynamicTBList, k)
+                break
+            end
+        end
+        dtFrame:Destroy()
+        tbCountLbl.Text = "TextBoxes creados: " .. #dynamicTBList .. " / 5"
+        tbCountLbl.TextColor3 = C.TEXT_DIM
+        SaveData()
+    end)
+
+    -- FadeIn
+    dtFrame.BackgroundTransparency = 1
+    Tween(dtFrame, {BackgroundTransparency = 0.06}, 0.22)
+
+    table.insert(dynamicTBList, {
+        frame      = dtFrame,
+        title      = cfg.title or "TextBox",
+        symStart   = cfg.symStart or "ninguno",
+        symEnd     = cfg.symEnd or "ninguno",
+        clearOnSend= cfg.clearOnSend or false,
+        w = w, h = h,
+    })
+
+    tbCountLbl.Text = "TextBoxes creados: " .. #dynamicTBList .. " / 5"
+    tbCountLbl.TextColor3 = C.TEXT_DIM
+    State.textboxes = dynamicTBList
+    SaveData()
+end
+
+-- Botón crear TextBox
+local createTbBtn = MakeButton(tbSec,
+    "+ CREAR TEXTBOX",
+    UDim2.new(1,-8,0,28), UDim2.new(0,4,0,142),
+    C.ACCENT2, C.BG_DARK, 12
+)
+createTbBtn.TextColor3 = C.BG_DARK
+createTbBtn.MouseButton1Click:Connect(function()
+    CreateDynamicTextBox({
+        title      = newTbTitle.Text ~= "" and newTbTitle.Text or "TextBox",
+        w          = tonumber(newTbW.Text) or 220,
+        h          = tonumber(newTbH.Text) or 180,
+        symStart   = SYMBOLS[newTbSymStart],
+        symEnd     = SYMBOLS[newTbSymEnd],
+        clearOnSend= clearOnSend,
+    })
+end)
+
+-- ─── [14C] Guardar todo ───
+
+local saveAllBtn = MakeButton(FolderScroll,
+    "💾  GUARDAR CONFIGURACIÓN COMPLETA",
+    UDim2.new(1,-8,0,34), UDim2.new(0,0,0,0),
+    C.GREEN, C.WHITE, 12
+)
+saveAllBtn.Size = UDim2.new(1,-8,0,34)
+saveAllBtn.MouseButton1Click:Connect(function()
+    SaveData()
+    Tween(saveAllBtn, {BackgroundColor3 = C.ACCENT}, 0.1)
+    task.delay(0.5, function()
+        Tween(saveAllBtn, {BackgroundColor3 = C.GREEN}, 0.3)
+    end)
+end)
+
+-- Toggle Folder
+BtnFolder.MouseButton1Click:Connect(function()
+    State.folderOpen = not State.folderOpen
+    if State.folderOpen then
+        FolderPanel.Visible = true
+        FolderPanel.BackgroundTransparency = 1
+        Tween(FolderPanel, {BackgroundTransparency = 0.04}, 0.22)
+    else
+        Tween(FolderPanel, {BackgroundTransparency = 1}, 0.18)
+        task.delay(0.2, function() FolderPanel.Visible = false end)
+    end
+end)
+
+BtnCloseFolder.MouseButton1Click:Connect(function()
+    State.folderOpen = false
+    Tween(FolderPanel, {BackgroundTransparency = 1}, 0.18)
+    task.delay(0.2, function() FolderPanel.Visible = false end)
+end)
+
+-- ═══════════════════════════════════════════════
+-- [15] CARGA INICIAL DE DATOS GUARDADOS
+-- ═══════════════════════════════════════════════
+
+task.spawn(function()
+    local saved = LoadData()
+    if not saved then return end
+
+    -- Restaurar chats
+    if saved.chatWindows then
+        for i, cw in ipairs(saved.chatWindows) do
+            if State.chatWindows[i] then
+                State.chatWindows[i].title    = cw.title    or State.chatWindows[i].title
+                State.chatWindows[i].symStart = cw.symStart or "ninguno"
+                State.chatWindows[i].symEnd   = cw.symEnd   or "ninguno"
+                State.chatWindows[i].extraBtn = cw.extraBtn or false
+                State.chatWindows[i].extraAuto= cw.extraAuto or false
+                -- Actualizar tarjeta
+                local card = ScrollChats:FindFirstChild("ChatCard_"..i)
+                if card then
+                    local tl = card:FindFirstChild("TitleCard_"..i)
+                    if tl then tl.Text = State.chatWindows[i].title end
+                end
+            end
+        end
+    end
+
+    -- Restaurar configuración del botón flotante
+    if saved.floatConfig then
+        local fc = saved.floatConfig
+        State.floatConfig = fc
+        local sz = math.clamp(fc.size or 54, 30, 90)
+        FloatHolder.Size = UDim2.new(0,sz,0,sz)
+        FloatBtn.Text    = fc.emoji or "💬"
+        FloatBtn.BackgroundTransparency = fc.alpha or 0
+        if fc.posX and fc.posY then
+            FloatHolder.Position = UDim2.new(0, fc.posX, 0, fc.posY)
+        end
+    end
+
+    -- Restaurar candado
+    if saved.floatLocked ~= nil then
+        State.floatLocked = saved.floatLocked
+        LockIcon.Text = State.floatLocked and "🔒" or "🔓"
+    end
+
+    -- Restaurar textboxes dinámicos
+    if saved.textboxes then
+        for _, tb in ipairs(saved.textboxes) do
+            CreateDynamicTextBox({
+                title      = tb.title,
+                w          = tb.size and tb.size[1] or 220,
+                h          = tb.size and tb.size[2] or 180,
+                symStart   = tb.symStart or "ninguno",
+                symEnd     = tb.symEnd   or "ninguno",
+                clearOnSend= tb.clearOnSend or false,
+            })
+        end
+    end
+end)
+
+-- ═══════════════════════════════════════════════
+-- [16] GUARDAR POSICIÓN DEL BOTÓN FLOTANTE
+-- ═══════════════════════════════════════════════
+
+-- Guarda posición cuando termina el drag
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch
+    or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        State.floatConfig.posX = FloatHolder.Position.X.Offset
+        State.floatConfig.posY = FloatHolder.Position.Y.Offset
+        -- Guardado diferido para no saturar
+        task.delay(0.5, SaveData)
+    end
+end)
+
+-- ═══════════════════════════════════════════════
+-- [17] MENSAJE DE INICIO
+-- ═══════════════════════════════════════════════
+
+task.delay(1, function()
+    -- Toast de bienvenida
+    local toast = MakeFrame(ScreenGui,
+        UDim2.new(0, 260, 0, 44),
+        UDim2.new(0.5, -130, 1, -70),
+        C.BG_DARK, 0.0
+    )
+    AddCorner(toast, 10)
+    AddStroke(toast, C.ACCENT, 1.2, 0.3)
+    toast.ZIndex = 20
+    MakeLabel(toast,
+        "  💬  " .. SCRIPT_NAME .. "  " .. VERSION .. "  cargado",
+        UDim2.new(1,0,1,0), UDim2.new(0,0,0,0),
+        C.ACCENT, 11, Enum.Font.GothamBold
+    ).TextXAlignment = Enum.TextXAlignment.Center
+
+    toast.BackgroundTransparency = 1
+    Tween(toast, {BackgroundTransparency = 0.0}, 0.3)
+    task.delay(2.5, function()
+        Tween(toast, {BackgroundTransparency = 1}, 0.4)
+        task.delay(0.5, function() toast:Destroy() end)
+    end)
+end)
+
+--[[
+╔══════════════════════════════════════════════════════════════╗
+║  VXZ Chat By natavxz  ·  V.1  ·  FIN DEL SCRIPT            ║
+║  Para V.2: cambiar VERSION = "V.2" y añadir features        ║
+╚══════════════════════════════════════════════════════════════╝
+--]]
